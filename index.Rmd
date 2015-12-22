@@ -1,0 +1,209 @@
+---
+title: "Practical Machine Learning project from coursera"
+author: "raquelhr"
+date: "22 December 2015"
+output: html_document
+---
+**Project directive**
+*In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). We acknowledge the data for this project came from this source: http://groupware.les.inf.puc-rio.br/har*
+
+#Exploratory data analysis
+Loading necessary packages and setting seed to meet reproducibility criteria
+```{r,results = "hide", message=FALSE, fig.width=8}
+library(caret)
+library(gbm)
+library(AppliedPredictiveModeling)
+library(randomForest)
+library(rpart)
+library(rattle)
+library(dplyr)
+library(plyr)
+library(mlearning)
+library(reshape2)
+library(ggplot2)
+library(gridExtra)
+set.seed(3433)
+```
+```{r, echo=FALSE, results="hide", message=FALSE}
+library(doMC)
+registerDoMC(8)
+```
+#Getting data
+```{r}
+url.training <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url.testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url.training, destfile="training.csv", method="curl")
+download.file(url.testing, destfile="testing.csv", method="curl")
+training.data <- read.csv("training.csv", na.strings=c("NA","#DIV/0!","", " "), 
+                          header=TRUE)
+testing.data <- read.csv("testing.csv", na.strings=c("NA","#DIV/0!","", " "), 
+                         header=TRUE)
+dim(training.data)
+dim(testing.data)
+```
+
+
+#Cleaning data
+There are many columns that only have NAs, or have majority NAs. We will deal with these so as to avoid overfitting.
+```{r}
+#remove columns and rows with only NA
+training.data <- training.data[ , !apply(is.na(training.data), 2, all) ]
+testing.data <- testing.data[ , !apply(is.na(testing.data), 2, all)  ]
+dim(training.data)
+dim(testing.data)
+names(testing.data)
+#deleting columns in the training dataset with more than 60% of NAs
+training.data <- training.data[, colSums(is.na(training.data)) < dim(training.data)[1]*0.6 ]
+#only missing one is the classe, and this is the one we want to predict
+names(training.data) == names(testing.data)
+#remove first 2 columns, which should be irrelevant
+#for the machine learning algorithms
+training.data <- training.data[,-(1:2)]
+testing.data <- testing.data[,-(1:2)]
+dim(training.data)
+dim(testing.data)
+```
+
+Now we have reduced the size of the data, we are ready to process it.
+#Processing the training dataset
+Training data is quite large, so we divide 75% into a training set
+and another 25% into a testing set to check for accuracy, before finally applying to the testing.data dataset.
+```{r}
+inTrain <- createDataPartition(training.data$classe, p = 3/4)[[1]]
+inTrain.training <- training.data[ inTrain,]
+inTrain.testing <- training.data[-inTrain,]
+```
+
+
+#Cross-validation and training
+For estimating model accuracy we will perform repeated $k=2$-fold Cross Validation. Ideally, we will use $k=8$-fold, or so, but the computational time increases rapidly. As it turns out, this will be sufficient for our purposes.
+```{r}
+#for reproducibility
+set.seed(62433)
+train.control <- trainControl(method="repeatedcv", number=2, repeats=2)
+```
+Implementing different Machine Learning algorithms (this is only a representative list, and in no way exhaustive).
+```{r}
+rpart.inTrain.training <- train(classe ~ ., method='rpart', data=inTrain.training, 
+                                preProcess=c("center", "scale"), 
+                                trControl=train.control)
+#depicting the regression tree
+fancyRpartPlot(rpart.inTrain.training$finalModel,sub='rhr')
+```
+
+```{r,results = "hide", message=FALSE}
+rf.inTrain.training <- train(classe ~ ., method='rf', data=inTrain.training, 
+                             preProcess=c("center", "scale"), 
+                             trControl=train.control)
+boosted.inTrain.training <- train(classe ~ ., method='gbm', data=inTrain.training, 
+                                  verbose=FALSE, 
+                                  preProcess=c("center", "scale"), 
+                                  trControl=train.control)
+lda.inTrain.training <- train(classe ~ ., method='lda', data=inTrain.training, 
+                              preProcess=c("center", "scale"), 
+                              trControl=train.control)
+```
+Now, we test the trained algorithms
+and apply these into the inTrain testing set
+```{r}
+predict.rpart.inTrain.training  <- predict(rpart.inTrain.training, inTrain.testing)
+predict.rf.inTrain.training  <- predict(rf.inTrain.training, inTrain.testing)
+predict.boosted.inTrain.training  <- predict(boosted.inTrain.training, inTrain.testing)
+predict.lda.inTrain.training  <- predict(lda.inTrain.training, inTrain.testing)
+```
+
+#Checking accuracy of the methods within the training dataset
+```{r}
+rpart.accuracy.inTrain.training <- confusionMatrix(predict.rpart.inTrain.training, 
+                                                inTrain.testing$classe)
+rf.accuracy.inTrain.training <- confusionMatrix(predict.rf.inTrain.training, 
+                                                inTrain.testing$classe)
+rf.accuracy.inTrain.training
+boosted.accuracy.inTrain.training <- confusionMatrix(predict.boosted.inTrain.training, 
+                                                     inTrain.testing$classe)
+boosted.accuracy.inTrain.training
+lda.accuracy.inTrain.training <- confusionMatrix(predict.lda.inTrain.training, 
+                                                 inTrain.testing$classe)
+```
+
+
+We observe that methods 'gradient boosting' and 'random forest' both offer better accuracy to predict the testing dataset within the training dataset.
+
+#Predictions using the trained algorithms
+Finally, let's now apply the methods we have experimented with to the true testing 
+dataset, and provide the answers.
+
+```{r}
+predict.rpart.testing <- predict(rpart.inTrain.training, testing.data)
+predict.rf.testing  <- predict(rf.inTrain.training, testing.data)
+predict.boosted.testing  <- predict(boosted.inTrain.training, testing.data)
+predict.lda.testing  <- predict(lda.inTrain.training, testing.data)
+#comparing predictions from methods employed
+predict.rpart.testing
+predict.rf.testing
+predict.boosted.testing
+predict.lda.testing
+#we also note that 
+predict.rf.testing == predict.boosted.testing
+```
+Thus 'gradient boosting' and 'random forest' offer the same predicted results, and also gave the highest accuracy in the training dataset. Therefore, we will use their results.
+
+#Completion of the project
+To complete the project, we publish the prediction of the testing
+```{r}
+answers <- c('B', 'A', 'B', 'A', 'A', 'E', 'D', 'B', 'A', 'A', 'B', 
+             'C', 'B', 'A', 'E', 'E', 'A', 'B', 'B', 'B')
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+pml_write_files(answers)
+```
+
+#Appendix
+
+##Depicting confusion matrices with heatmaps
+```{r, echo=FALSE, results="hide"}
+rpart.cm <- rpart.accuracy.inTrain.training$table 
+rpart.cm <- melt(rpart.cm)
+rf.cm <- rf.accuracy.inTrain.training$table 
+rf.cm <- melt(rf.cm)
+boosted.cm <- boosted.accuracy.inTrain.training$table 
+boosted.cm <- melt(boosted.cm)
+lda.cm <- lda.accuracy.inTrain.training$table 
+lda.cm <- melt(lda.cm)
+perc.accuracy.rpart <- round(rpart.accuracy.inTrain.training$overall[[1]],4)*100
+perc.accuracy.rf <- round(rf.accuracy.inTrain.training$overall[[1]],4)*100
+perc.accuracy.boosted <- round(boosted.accuracy.inTrain.training$overall[[1]],4)*100
+perc.accuracy.lda <- round(lda.accuracy.inTrain.training$overall[[1]],4)*100
+p1 <- ggplot(data = rpart.cm, aes(x=Prediction, y=Reference, 
+                            title='Recurs. part. & regres. trees', 
+                            fill=value)) + geom_tile() +
+    annotate("text", x = 3.9, y = 0.8, size=3,
+             label = paste("accuracy=",perc.accuracy.rpart, "%"), 
+                                                             colour='white')
+p2 <- ggplot(data = rf.cm, aes(x=Prediction, y=Reference, 
+                                  title='Random forest', fill=value)) + 
+    geom_tile()+
+    annotate("text", x = 3.9, y = 0.8, size=3,
+             label = paste("accuracy=",perc.accuracy.rf, "%"), 
+             colour='white')
+p3 <- ggplot(data = boosted.cm, aes(x=Prediction, y=Reference, 
+                                  title='Gradient boosting', fill=value)) + 
+    geom_tile()+
+    annotate("text", x = 3.9, y = 0.8, size=3,
+             label = paste("accuracy=",perc.accuracy.boosted, "%"), 
+             colour='white')
+p4 <- ggplot(data = lda.cm, aes(x=Prediction, y=Reference, 
+                                  title='Linear discriminant analysis', fill=value)) + 
+    geom_tile()+
+    annotate("text", x = 3.9, y = 0.8, size=3,
+             label = paste("accuracy=",perc.accuracy.lda, "%"), 
+             colour='white')
+```
+```{r, echo=FALSE}
+grid.arrange(p1, p2, p3, p4, ncol=2, nrow =2)
+```
